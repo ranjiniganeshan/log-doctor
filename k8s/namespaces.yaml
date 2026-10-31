@@ -1,0 +1,25 @@
+# Pod Security Admission: app namespaces enforce "restricted".
+# Fluentd needs hostPath mounts to read node logs, so "logging" is "privileged".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apps
+  labels:
+    app.kubernetes.io/part-of: log-doctor-demo
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+  labels:
+    app.kubernetes.io/part-of: log-doctor-demo
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: log-doctor
+  labels:
+    app.kubernetes.io/part-of: log-doctor-demo
+    pod-security.kubernetes.io/enforce: restricted

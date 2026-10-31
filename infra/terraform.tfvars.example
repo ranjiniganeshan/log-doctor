@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is git-ignored.
+
+region       = "ap-south-1"
+project_name = "log-doctor"
+
+# Lock the EKS API down to your own IP: curl -s https://checkip.amazonaws.com
+cluster_endpoint_public_access_cidrs = ["203.0.113.10/32"]
+
+# A Claude inference profile ID available in your region. Find one with:
+#   aws bedrock list-inference-profiles --region ap-south-1 \
+#     --query "inferenceProfileSummaries[?contains(inferenceProfileId,'anthropic')].inferenceProfileId"
+bedrock_model_id = "apac.anthropic.REPLACE_WITH_MODEL"
+
+# Set to false if `aws iam get-role --role-name AWSServiceRoleForAmazonOpenSearchService` succeeds.
+create_opensearch_service_linked_role = true

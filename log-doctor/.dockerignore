@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+k8s/
+.venv/

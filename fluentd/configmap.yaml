@@ -1,0 +1,114 @@
+# Replaces the image's default /fluentd/etc entirely with this pipeline:
+#
+#   tail /var/log/containers/*.log (CRI format, containerd)
+#     -> drop Fluentd's own logs + kube-system/node-lease/public noise (exclude_path)
+#     -> add Kubernetes metadata (pod, namespace, labels, ...)
+#     -> parse the app's JSON line into top-level fields
+#     -> OpenSearch, daily index app-logs-YYYY.MM.DD, SigV4-signed with the IRSA role
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: logging
+data:
+  fluent.conf: |
+    <system>
+      log_level info
+    </system>
+
+    # Fluentd's own internal logs: don't ship them anywhere.
+    <label @FLUENT_LOG>
+      <match fluent.**>
+        @type null
+      </match>
+    </label>
+
+    <source>
+      @type tail
+      @id in_tail_container_logs
+      path /var/log/containers/*.log
+      # File names are <pod>_<namespace>_<container>-<id>.log
+      exclude_path ["/var/log/containers/*_logging_*.log", "/var/log/containers/*_kube-system_*.log", "/var/log/containers/*_kube-public_*.log", "/var/log/containers/*_kube-node-lease_*.log", "/var/log/containers/*_amazon-cloudwatch_*.log"]
+      pos_file /var/lib/fluentd/pos/containers.log.pos
+      tag kubernetes.*
+      read_from_head true
+      follow_inodes true
+      refresh_interval 10
+      <parse>
+        # containerd CRI line: <time> <stream> <F|P> <log>
+        @type regexp
+        expression /^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[FP]) (?<log>.*)$/
+        time_format %Y-%m-%dT%H:%M:%S.%N%:z
+      </parse>
+    </source>
+
+    <filter kubernetes.**>
+      @type kubernetes_metadata
+      @id filter_kube_metadata
+      skip_container_metadata true
+      skip_master_url true
+      skip_namespace_metadata true
+    </filter>
+
+    # Lift the app's JSON fields (level, service, message, trace_id, error...)
+    # to the top level. Non-JSON lines are kept as-is in the "log" field.
+    <filter kubernetes.**>
+      @type parser
+      key_name log
+      reserve_data true
+      remove_key_name_field true
+      emit_invalid_record_to_error false
+      <parse>
+        @type json
+      </parse>
+    </filter>
+
+    <filter kubernetes.**>
+      @type record_transformer
+      remove_keys logtag
+    </filter>
+
+    <match kubernetes.**>
+      @type opensearch
+      @id out_opensearch
+      host "#{ENV['OPENSEARCH_HOST']}"
+      port 443
+      scheme https
+      ssl_verify true
+
+      logstash_format true
+      logstash_prefix app-logs
+      logstash_dateformat %Y.%m.%d
+      suppress_type_name true
+
+      # The IAM policy only allows writes, so skip calls that need other permissions.
+      verify_os_version_at_startup false
+      default_opensearch_version 2
+      reload_connections false
+      reload_on_failure false
+      reconnect_on_error true
+      request_timeout 30s
+      log_os_400_reason true
+
+      <endpoint>
+        url "https://#{ENV['OPENSEARCH_HOST']}"
+        region "#{ENV['AWS_REGION']}"
+        assume_role_arn "#{ENV['AWS_ROLE_ARN']}"
+        assume_role_web_identity_token_file "#{ENV['AWS_WEB_IDENTITY_TOKEN_FILE']}"
+        sts_credentials_region "#{ENV['AWS_REGION']}"
+      </endpoint>
+
+      <buffer>
+        @type file
+        path /var/lib/fluentd/buffer/opensearch
+        flush_mode interval
+        flush_interval 10s
+        flush_thread_count 2
+        chunk_limit_size 4M
+        total_limit_size 256M
+        overflow_action drop_oldest_chunk
+        retry_type exponential_backoff
+        retry_max_interval 60s
+        retry_timeout 1h
+      </buffer>
+    </match>

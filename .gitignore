@@ -1,0 +1,29 @@
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+*.tfplan
+
+# Rendered manifests (contain account IDs / endpoints)
+build/
+
+# Secrets - never commit
+k8s/slack-secret.yaml
+*.secret.yaml
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
