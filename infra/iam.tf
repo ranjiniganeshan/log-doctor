@@ -64,10 +64,11 @@ resource "aws_iam_role_policy" "fluentd" {
 # ---------------------------------------------------------------------------
 locals {
   # Cross-region inference profiles are prefixed with a geography, e.g.
-  # "apac.anthropic.<model>" or "global.anthropic.<model>".
-  bedrock_profile_prefix_regex = "^(apac|us|eu|jp|au|ca|global|us-gov)\\."
+  # "apac.anthropic.<model>", "in.anthropic.<model>" or "global.anthropic.<model>".
+  # Any "<geo>." in front of "anthropic." is treated as a profile prefix.
+  bedrock_profile_prefix_regex = "^[a-z-]+\\.(anthropic\\.)"
   bedrock_is_profile           = can(regex(local.bedrock_profile_prefix_regex, var.bedrock_model_id))
-  bedrock_foundation_model_id  = local.bedrock_is_profile ? replace(var.bedrock_model_id, "/${local.bedrock_profile_prefix_regex}/", "") : var.bedrock_model_id
+  bedrock_foundation_model_id  = local.bedrock_is_profile ? replace(var.bedrock_model_id, "/${local.bedrock_profile_prefix_regex}/", "$1") : var.bedrock_model_id
 
   bedrock_profile_arn = "arn:${data.aws_partition.current.partition}:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}"
 }

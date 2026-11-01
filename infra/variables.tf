@@ -85,7 +85,7 @@ variable "create_opensearch_service_linked_role" {
 variable "bedrock_model_id" {
   description = <<-EOT
     Bedrock model identifier Log Doctor will call. Either a cross-region inference
-    profile ID (e.g. "apac.anthropic.<model>" or "global.anthropic.<model>") or a
+    profile ID (e.g. "apac.", "in." or "global.anthropic.<model>") or a
     direct foundation model ID ("anthropic.<model>"). List what's available with:
       aws bedrock list-inference-profiles --region ap-south-1
   EOT
