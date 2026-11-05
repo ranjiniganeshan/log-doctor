@@ -84,16 +84,19 @@ variable "create_opensearch_service_linked_role" {
 # ---------------------------------------------------------------------------
 variable "bedrock_model_id" {
   description = <<-EOT
-    Bedrock model identifier Log Doctor will call. Either a cross-region inference
-    profile ID (e.g. "apac.", "in." or "global.anthropic.<model>") or a
-    direct foundation model ID ("anthropic.<model>"). List what's available with:
+    Bedrock model Log Doctor will call through the Converse API. Either a
+    model ID that supports on-demand use in your region (e.g.
+    "openai.gpt-oss-20b-1:0") or a cross-region inference profile ID (e.g.
+    "global.amazon.nova-2-lite-v1:0").
+    List what's available with:
       aws bedrock list-inference-profiles --region ap-south-1
+      aws bedrock list-foundation-models --region ap-south-1 --by-inference-type ON_DEMAND
   EOT
   type        = string
 
   validation {
-    condition     = can(regex("anthropic\\.", var.bedrock_model_id))
-    error_message = "bedrock_model_id must be an Anthropic model or inference profile ID."
+    condition     = can(regex("^([a-z-]+\\.)?[a-z0-9-]+\\.[A-Za-z0-9.:_-]+$", var.bedrock_model_id))
+    error_message = "bedrock_model_id must look like <provider>.<model> or <geo>.<provider>.<model>."
   }
 }
 

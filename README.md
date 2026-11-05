@@ -1,6 +1,6 @@
 # 🩺 Log Doctor
 
-**An LLM on-call buddy for Kubernetes: every 15 minutes it reads your ERROR logs from OpenSearch, asks Claude on Amazon Bedrock what's going on, and posts a plain-English diagnosis to Slack.**
+**An LLM on-call buddy for Kubernetes: every 15 minutes it reads your ERROR logs from OpenSearch, asks an LLM on Amazon Bedrock (`openai.gpt-oss-20b-1:0` by default) what's going on, and posts a plain-English diagnosis to Slack.**
 
 > If there are no errors, it stays quiet.
 
@@ -27,7 +27,7 @@ This repo is a complete, hands-on demo you can stand up in about 30 minutes and 
    • Latency/health of `payment-gateway.payments.svc` (`kubectl -n payments get pods`)
    • Whether the 5s client timeout is appropriate and retries have backoff
 ───────────────
-model `apac.anthropic.…` · 1840 in / 310 out tokens · index `app-logs-*` · Log Doctor 0.1.0
+model `openai.gpt-oss-20b-1:0` · 1840 in / 310 out tokens · index `app-logs-*` · Log Doctor 0.1.0
 ```
 <sub>Illustrative output. The exact wording depends on the model you choose.</sub>
 
@@ -55,13 +55,13 @@ flowchart LR
     N -- tail + k8s metadata --> F
     F -- "SigV4 /_bulk<br/>(IRSA, write-only)" --> OS[("Amazon OpenSearch<br/>app-logs-YYYY.MM.DD")]
     C -- "SigV4 /_search aggregation<br/>(IRSA, read-only)" --> OS
-    C -- "Converse API<br/>(InvokeModel on one model)" --> BR["Amazon Bedrock<br/>Claude"]
+    C -- "Converse API<br/>(InvokeModel on one model)" --> BR["Amazon Bedrock"]
     C -- "Incoming webhook" --> SL["Slack"]
 ```
 
 **Key design points**
 
-- **The script does all the fetching.** Claude never talks to OpenSearch. Log Doctor runs one aggregation query (top messages per service, with counts and 2 sample lines each), trims it, and sends only that summary to the model. That keeps the result predictable, auditable and cheap.
+- **The script does all the fetching.** The model never talks to OpenSearch. Log Doctor runs one aggregation query (top messages per service, with counts and 2 sample lines each), trims it, and sends only that summary to the model. That keeps the result predictable, auditable and cheap.
 - **Token cost is bounded by config**, not by log volume: top 10 services × top 5 messages × 2 samples, stack traces trimmed to the last 12 lines, a hard 16k-character prompt budget, and `maxTokens` on the reply.
 - **Secrets and PII are scrubbed** before anything leaves the cluster (AWS keys, bearer tokens, `password=`, emails, Slack webhooks). The prompt also tells the model to treat log text as untrusted data, and Slack control sequences like `<!channel>` are escaped.
 - **Least privilege everywhere.** Each pod gets its own IAM role, scoped to exactly the API calls it needs (details below).
@@ -98,13 +98,14 @@ I chose this over OpenSearch fine-grained access control (FGAC) because it's the
 
 **Why IRSA and not EKS Pod Identity?** Both work for boto3. Fluentd's OpenSearch plugin, though, has first-class config for web-identity (IRSA) role assumption (`assume_role_web_identity_token_file`). Using IRSA for both workloads keeps one mechanism to explain. Each role's trust policy is pinned to an exact `system:serviceaccount:<namespace>:<name>`.
 
-**Bedrock: cross-region inference profiles.** In `ap-south-1`, current Claude models are offered through geographic inference profiles (e.g. `apac.anthropic.…`) that may route a request to another APAC region. The IAM policy therefore allows (1) the profile ARN in your region, and (2) the matching foundation model in any region, **only** when `bedrock:InferenceProfileArn` equals that profile. See [`infra/iam.tf`](infra/iam.tf).
+**Bedrock: one model in one region.** The default, `openai.gpt-oss-20b-1:0`, is called directly in `ap-south-1`, so the IAM policy allows only that model in that region. You can use a cross-region inference profile instead (IDs starting with `global.`, `apac.` and so on). A profile may route a request to another region, so the IAM policy then allows (1) the profile ARN in your region, and (2) the matching foundation model in any region, **only** when `bedrock:InferenceProfileArn` equals that profile. See [`infra/iam.tf`](infra/iam.tf).
 
 ---
 
 ## Prerequisites
 
-- An AWS account and an IAM identity that can create VPC/EKS/OpenSearch/ECR/IAM resources
+- An AWS account on a **Paid plan** (the Free plan limits instance types), and an IAM identity that can create VPC/EKS/OpenSearch/ECR/IAM resources
+- Permission to create an IAM OIDC provider (`iam:CreateOpenIDConnectProvider`), which IRSA needs. Check that no service control policy blocks it
 - Locally: **AWS CLI v2** (a recent release; `bedrock-runtime converse` needs a 2024+ version), **Terraform ≥ 1.6**, **kubectl**, **Docker** (with buildx, for `linux/amd64` builds on Apple Silicon), **envsubst** (`brew install gettext` on macOS), `make`, `curl`
 - A Slack workspace where you can add an app
 
@@ -114,29 +115,38 @@ I chose this over OpenSearch fine-grained access control (FGAC) because it's the
 
 ## Step-by-step setup
 
-### 1. Enable Claude on Amazon Bedrock
+### 1. Check the model on Amazon Bedrock
 
-Amazon Bedrock now enables serverless models automatically on first use. You no longer request access per model on a "Model access" page. Anthropic models still need two one-time steps per account:
+Log Doctor talks to Bedrock through the model-agnostic **Converse API**, so any Bedrock chat model works. The default is **`openai.gpt-oss-20b-1:0`** in `ap-south-1`.
 
-1. **Submit Anthropic's use-case details.** In the Bedrock console (region **Asia Pacific (Mumbai)**), open **Model catalog**, pick a Claude model and follow the prompt to submit the use-case form. Access usually arrives within minutes. (If your console still shows a **Model access** page, request the Claude model there instead.)
-2. **Pick an inference profile ID** for `MODEL_ID`:
+1. **List the models you can call directly in your region:**
 
    ```bash
-   aws bedrock list-inference-profiles --region ap-south-1 \
-     --query "inferenceProfileSummaries[?contains(inferenceProfileId,'anthropic')].[inferenceProfileId,inferenceProfileName]" \
-     --output table
+   aws bedrock list-foundation-models --region ap-south-1 --by-output-modality TEXT \
+     --query "modelSummaries[?contains(inferenceTypesSupported,'ON_DEMAND')].modelId"
    ```
 
-   A Haiku- or Sonnet-class model is plenty for this job and much cheaper than Opus-class.
-
-3. **Invoke it once with your own (admin) credentials.** The first invocation of an Anthropic model creates its AWS Marketplace subscription, which needs `aws-marketplace:*` permissions. Log Doctor's role deliberately doesn't have those.
+2. **Make a test call with your own admin identity.** Third-party models can create an AWS Marketplace subscription on first use, which Log Doctor's role isn't allowed to do:
 
    ```bash
-   export MODEL_ID="apac.anthropic.<the-profile-you-picked>"
+   export MODEL_ID="openai.gpt-oss-20b-1:0"
    aws bedrock-runtime converse --region ap-south-1 --model-id "$MODEL_ID" \
      --messages '[{"role":"user","content":[{"text":"Reply with OK"}]}]' \
-     --inference-config '{"maxTokens":50}'
+     --inference-config '{"maxTokens":800}'
    ```
+
+   This model also returns reasoning blocks and counts them against `maxTokens`, so don't set the limit too low. Log Doctor keeps only the text.
+
+<details>
+<summary>Using a different model</summary>
+
+Set `bedrock_model_id` in `infra/terraform.tfvars` and redeploy. IAM is generated for whichever ID you choose.
+
+Some models, including Amazon Nova in `ap-south-1`, are only offered through cross-region inference profiles such as `global.amazon.nova-2-lite-v1:0`. List them with `aws bedrock list-inference-profiles --region ap-south-1 --query "inferenceProfileSummaries[].inferenceProfileId" --output text`. A profile can route requests to other regions, so a policy that limits your account to one region can block it.
+
+Anthropic (Claude) models need two extra one-time steps: submit Anthropic's **use-case form** in the Bedrock console (Model catalog → pick the model; in an AWS Organization it can be done once in the management account), and invoke the model once with your own admin credentials. Check its quota too.
+
+</details>
 
 ### 2. Create a Slack incoming webhook
 
@@ -243,7 +253,7 @@ Behaviour worth knowing:
 
 ## Approximate cost
 
-Rough on-demand prices for **ap-south-1**. Check the AWS pricing pages before you run this; prices change.
+Rough on-demand estimates based on **ap-southeast-2 (Sydney)** prices. `ap-south-1` will differ, so check the AWS pricing pages before you run this.
 
 | Resource | Size | ≈ per hour | ≈ per day |
 |---|---|---|---|
@@ -265,7 +275,7 @@ Rough on-demand prices for **ap-south-1**. Check the AWS pricing pages before yo
 ## Teardown
 
 ```bash
-make infra-down
+make infra-down   # type "yes" when Terraform asks
 ```
 
 This deletes the Kubernetes resources (CronJob, apps, Fluentd, namespaces), then runs `terraform destroy` for everything: OpenSearch domain, EKS cluster and node group, NAT gateway, VPC, IAM roles, and ECR repos (`force_delete` removes the images too). Expect about 15-20 minutes.

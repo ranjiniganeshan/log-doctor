@@ -63,12 +63,12 @@ resource "aws_iam_role_policy" "fluentd" {
 # Log Doctor: read-only search + invoke one Bedrock model
 # ---------------------------------------------------------------------------
 locals {
-  # Cross-region inference profiles are prefixed with a geography, e.g.
-  # "apac.anthropic.<model>", "in.anthropic.<model>" or "global.anthropic.<model>".
-  # Any "<geo>." in front of "anthropic." is treated as a profile prefix.
-  bedrock_profile_prefix_regex = "^[a-z-]+\\.(anthropic\\.)"
+  # Cross-region inference profiles are a geography prefix + the model ID, e.g.
+  # "global.anthropic.<model>", "in.anthropic.<model>", "apac.amazon.nova-lite-v1:0".
+  # Plain model IDs ("amazon.nova-micro-v1:0", "anthropic.<model>") have no prefix.
+  bedrock_profile_prefix_regex = "^(us|us-gov|eu|apac|jp|au|ca|in|global)\\."
   bedrock_is_profile           = can(regex(local.bedrock_profile_prefix_regex, var.bedrock_model_id))
-  bedrock_foundation_model_id  = local.bedrock_is_profile ? replace(var.bedrock_model_id, "/${local.bedrock_profile_prefix_regex}/", "$1") : var.bedrock_model_id
+  bedrock_foundation_model_id  = local.bedrock_is_profile ? replace(var.bedrock_model_id, "/${local.bedrock_profile_prefix_regex}/", "") : var.bedrock_model_id
 
   bedrock_profile_arn = "arn:${data.aws_partition.current.partition}:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}"
 }

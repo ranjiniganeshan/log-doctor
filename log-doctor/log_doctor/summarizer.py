@@ -1,4 +1,4 @@
-"""Turn an ErrorReport into a compact prompt and ask Claude (via Bedrock) to explain it.
+"""Turn an ErrorReport into a compact prompt and ask a Bedrock model (Converse API) to explain it.
 
 Cost control happens here, before anything reaches the model:
   * only the top-N services and top-N messages per service (from the query)
@@ -168,7 +168,8 @@ def summarize(cfg: Config, prompt: str, client: Any | None = None) -> Summary:
         "modelId": cfg.model_id,
         "system": [{"text": SYSTEM_PROMPT}],
         "messages": [{"role": "user", "content": [{"text": prompt}]}],
-        # Only maxTokens: recent Claude models reject non-default temperature/top_p.
+        # Only maxTokens: some models (e.g. recent Claude) reject non-default temperature/top_p,
+        # so sampling stays at each model's defaults to keep any MODEL_ID working.
         "inferenceConfig": {"maxTokens": cfg.max_output_tokens},
     }
     if cfg.additional_model_fields:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -34,6 +35,18 @@ def _chunk(text: str, limit: int = SECTION_LIMIT) -> list[str]:
     return chunks
 
 
+def to_mrkdwn(text: str) -> str:
+    """Convert common Markdown that models emit anyway into Slack mrkdwn.
+
+    **bold** / __bold__ -> *bold*, "## Heading" -> *Heading*, "- item" / "* item" -> "• item".
+    """
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    text = re.sub(r"__(.+?)__", r"*\1*", text)
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", r"*\1*", text)
+    text = re.sub(r"(?m)^(\s*)[-*]\s+", r"\1• ", text)
+    return text
+
+
 def escape(text: str) -> str:
     """Escape Slack control characters.
 
@@ -49,7 +62,7 @@ def build_payload(summary_text: str, *, total_errors: int, window_minutes: int, 
     blocks: list[dict[str, Any]] = [
         {"type": "header", "text": {"type": "plain_text", "text": title[:150], "emoji": True}},
     ]
-    for chunk in _chunk(escape(summary_text)):
+    for chunk in _chunk(escape(to_mrkdwn(summary_text))):
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
     blocks = blocks[: MAX_BLOCKS - 2]
     blocks.append({"type": "divider"})

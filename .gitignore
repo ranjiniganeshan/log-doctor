@@ -6,6 +6,7 @@ infra/.terraform/
 !*.tfvars.example
 crash.log
 *.tfplan
+infra/tfplan
 
 # Rendered manifests (contain account IDs / endpoints)
 build/

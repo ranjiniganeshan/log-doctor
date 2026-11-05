@@ -6,11 +6,12 @@ project_name = "log-doctor"
 # Lock the EKS API down to your own IP: curl -s https://checkip.amazonaws.com
 cluster_endpoint_public_access_cidrs = ["203.0.113.10/32"]
 
-# A Claude inference profile ID available in your region. Find one with:
-#   aws bedrock list-inference-profiles --region ap-south-1 \
-#     --query "inferenceProfileSummaries[?contains(inferenceProfileId,'anthropic')].inferenceProfileId"
-# e.g. "global.anthropic.<model>", "in.anthropic.<model>" (stays in India) or "apac.anthropic.<model>"
-bedrock_model_id = "global.anthropic.REPLACE_WITH_MODEL"
+# A Bedrock model you can call in your region. List on-demand models with:
+#   aws bedrock list-foundation-models --region ap-south-1 --by-output-modality TEXT \
+#     --query "modelSummaries[?contains(inferenceTypesSupported,'ON_DEMAND')].modelId"
+# Cross-region inference profiles also work, e.g. "global.amazon.nova-2-lite-v1:0",
+# but they can route requests to other regions, so a region-lock policy may block them.
+bedrock_model_id = "openai.gpt-oss-20b-1:0"
 
 # Set to false if `aws iam get-role --role-name AWSServiceRoleForAmazonOpenSearchService` succeeds.
 create_opensearch_service_linked_role = true

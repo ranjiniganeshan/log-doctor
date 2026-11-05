@@ -56,7 +56,7 @@ def setup_logging(level: str) -> None:
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="log-doctor", description="Explain recent ERROR logs with Claude on Bedrock.")
+    parser = argparse.ArgumentParser(prog="log-doctor", description="Explain recent ERROR logs with an LLM on Amazon Bedrock.")
     parser.add_argument("--dry-run", action="store_true", help="print the Slack message instead of posting it")
     parser.add_argument("--skip-llm", action="store_true", help="don't call Bedrock; print the prompt that would be sent")
     parser.add_argument("--minutes", type=int, default=None, help="override LOOKBACK_MINUTES")
